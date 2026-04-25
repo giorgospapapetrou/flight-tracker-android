@@ -68,7 +68,7 @@ fun MapScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         MapLibreSurface(
-            aircraft = state.aircraft,
+            aircraft = state.aircraftList,    // ← was state.aircraft
             onAircraftClick = viewModel::selectAircraft,
         )
     }

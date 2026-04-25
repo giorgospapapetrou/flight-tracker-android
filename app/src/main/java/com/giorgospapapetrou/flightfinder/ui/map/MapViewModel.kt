@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.AircraftRepository
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
+import com.giorgospapapetrou.flightfinder.domain.model.AircraftEvent
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,13 +15,14 @@ import timber.log.Timber
 import javax.inject.Inject
 
 data class MapUiState(
-    val aircraft: List<Aircraft> = emptyList(),
+    val aircraft: Map<String, Aircraft> = emptyMap(),
     val selectedIcao: String? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
+    val isStreamConnected: Boolean = false,
 ) {
-    val selectedAircraft: Aircraft?
-        get() = selectedIcao?.let { icao -> aircraft.firstOrNull { it.icao == icao } }
+    val aircraftList: List<Aircraft> get() = aircraft.values.toList()
+    val selectedAircraft: Aircraft? get() = selectedIcao?.let { aircraft[it] }
 }
 
 @HiltViewModel
@@ -33,45 +34,56 @@ class MapViewModel @Inject constructor(
     val uiState: StateFlow<MapUiState> = _uiState.asStateFlow()
 
     init {
-        startPolling()
+        loadInitialSnapshot()
+        observeLiveStream()
     }
 
-    private fun startPolling() {
+    private fun loadInitialSnapshot() {
         viewModelScope.launch {
-            while (true) {
-                refresh()
-                delay(POLL_INTERVAL_MS)
+            try {
+                val initial = aircraftRepository.fetchCurrentAircraft()
+                    .filter { it.hasPosition }
+                    .associateBy { it.icao }
+                _uiState.update {
+                    it.copy(aircraft = initial, isLoading = false, errorMessage = null)
+                }
+            } catch (t: Throwable) {
+                Timber.w(t, "Initial snapshot failed")
+                _uiState.update {
+                    it.copy(isLoading = false, errorMessage = t.localizedMessage ?: "Load failed")
+                }
             }
         }
     }
 
-    private suspend fun refresh() {
-        try {
-            val aircraft = aircraftRepository.fetchCurrentAircraft()
-                .filter { it.hasPosition }
-            _uiState.update {
-                it.copy(
-                    aircraft = aircraft,
-                    isLoading = false,
-                    errorMessage = null,
-                )
-            }
-        } catch (t: Throwable) {
-            Timber.w(t, "Failed to fetch aircraft")
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    errorMessage = t.localizedMessage ?: "Failed to load",
-                )
+    private fun observeLiveStream() {
+        viewModelScope.launch {
+            aircraftRepository.liveEvents().collect { event ->
+                when (event) {
+                    is AircraftEvent.Connected -> {
+                        _uiState.update { it.copy(isStreamConnected = true) }
+                    }
+                    is AircraftEvent.Disconnected -> {
+                        _uiState.update { it.copy(isStreamConnected = false) }
+                    }
+                    is AircraftEvent.Update -> {
+                        if (event.aircraft.hasPosition) {
+                            _uiState.update {
+                                it.copy(aircraft = it.aircraft + (event.aircraft.icao to event.aircraft))
+                            }
+                        }
+                    }
+                    is AircraftEvent.Removed -> {
+                        _uiState.update {
+                            it.copy(aircraft = it.aircraft - event.icao)
+                        }
+                    }
+                }
             }
         }
     }
 
     fun selectAircraft(icao: String?) {
         _uiState.update { it.copy(selectedIcao = icao) }
-    }
-
-    companion object {
-        private const val POLL_INTERVAL_MS = 3_000L
     }
 }
