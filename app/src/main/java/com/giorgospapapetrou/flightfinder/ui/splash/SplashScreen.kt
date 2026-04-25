@@ -10,6 +10,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,12 +18,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 
 @Composable
 fun SplashScreen(
     viewModel: SplashViewModel = hiltViewModel(),
+    onConnected: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(state) {
+        if (state is SplashUiState.Connected) {
+            delay(500)
+            onConnected()
+        }
+    }
 
     Box(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -57,10 +67,7 @@ fun SplashScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    Text(
-                        s.message,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    Text(s.message, style = MaterialTheme.typography.bodySmall)
                     Button(onClick = viewModel::connect) {
                         Text("Retry")
                     }
