@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.drawable.BitmapDrawable
+import android.preference.PreferenceManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,63 +37,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.giorgospapapetrou.flightfinder.domain.model.FlightDetail
 import com.giorgospapapetrou.flightfinder.domain.model.FlightPosition
 import com.giorgospapapetrou.flightfinder.domain.model.FlightSummary
-import com.google.gson.JsonObject
-import org.maplibre.android.camera.CameraUpdateFactory
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.geometry.LatLngBounds
-import org.maplibre.android.maps.MapLibreMap
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.Style
-import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.android.style.layers.Property
-import org.maplibre.android.style.layers.PropertyFactory
-import org.maplibre.android.style.layers.SymbolLayer
-import org.maplibre.android.style.sources.GeoJsonSource
-import org.maplibre.geojson.Feature
-import org.maplibre.geojson.FeatureCollection
-import org.maplibre.geojson.LineString
-import org.maplibre.geojson.Point
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
-
-private const val OSM_STYLE_JSON = """
-{
-  "version": 8,
-  "sources": {
-    "osm": {
-      "type": "raster",
-      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      "tileSize": 256,
-      "attribution": "© OpenStreetMap contributors"
-    }
-  },
-  "layers": [
-    { "id": "osm", "type": "raster", "source": "osm" }
-  ]
-}
-"""
-
-// Style image IDs
-private const val START_ICON_ID = "fd-start-icon"
-private const val END_ICON_ID = "fd-end-icon"
-private const val REPLAY_ICON_ID = "fd-replay-plane-icon"
-
-// Sources & layers
-private const val PATH_SOURCE_ID = "fd-path-source"
-private const val PATH_LAYER_ID = "fd-path-layer"
-private const val ENDPOINTS_SOURCE_ID = "fd-endpoints-source"
-private const val ENDPOINTS_LAYER_ID = "fd-endpoints-layer"
-private const val REPLAY_SOURCE_ID = "fd-replay-source"
-private const val REPLAY_LAYER_ID = "fd-replay-layer"
-
-// Feature properties
-private const val PROP_ROLE = "role"  // "start" or "end"
-private const val PROP_HEADING = "heading"
 
 @Composable
 fun FlightDetailScreen(
@@ -275,159 +233,156 @@ private fun FlightPathMap(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val startBitmap = remember { createDotBitmap(0xFF2E7D32.toInt()) }
+    val endBitmap = remember { createDotBitmap(0xFFC62828.toInt()) }
+    val replayBitmap = remember { createPlaneBitmap(0xFFFFB300.toInt()) }
     val mapState = remember { FlightDetailMapState() }
 
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
-            val mapView = MapView(ctx)
-            mapView.onCreate(null)
-            mapView.getMapAsync { map ->
-                mapState.map = map
-                map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
-                    // Register icons
-                    style.addImage(START_ICON_ID, createDotBitmap(0xFF2E7D32.toInt()))
-                    style.addImage(END_ICON_ID, createDotBitmap(0xFFC62828.toInt()))
-                    style.addImage(REPLAY_ICON_ID, createPlaneBitmap(0xFFFFB300.toInt()))
+            Configuration.getInstance().load(
+                ctx.applicationContext,
+                PreferenceManager.getDefaultSharedPreferences(ctx.applicationContext)
+            )
+            Configuration.getInstance().userAgentValue = ctx.packageName
 
-                    // Path source + line layer
-                    val pathSource = GeoJsonSource(
-                        PATH_SOURCE_ID,
-                        FeatureCollection.fromFeatures(emptyList())
-                    )
-                    style.addSource(pathSource)
-                    mapState.pathSource = pathSource
-                    val pathLayer = LineLayer(PATH_LAYER_ID, PATH_SOURCE_ID).withProperties(
-                        PropertyFactory.lineColor("#1976D2"),
-                        PropertyFactory.lineWidth(3f),
-                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                    )
-                    style.addLayer(pathLayer)
-
-                    // Endpoints source + symbol layer (start/end pins)
-                    val endpointsSource = GeoJsonSource(
-                        ENDPOINTS_SOURCE_ID,
-                        FeatureCollection.fromFeatures(emptyList())
-                    )
-                    style.addSource(endpointsSource)
-                    mapState.endpointsSource = endpointsSource
-                    val endpointsLayer = SymbolLayer(ENDPOINTS_LAYER_ID, ENDPOINTS_SOURCE_ID)
-                        .withProperties(
-                            PropertyFactory.iconImage(
-                                Expression.match(
-                                    Expression.get(PROP_ROLE),
-                                    Expression.literal(END_ICON_ID),
-                                    Expression.stop(Expression.literal("start"), Expression.literal(START_ICON_ID)),
-                                    Expression.stop(Expression.literal("end"), Expression.literal(END_ICON_ID)),
-                                )
-                            ),
-                            PropertyFactory.iconAllowOverlap(true),
-                            PropertyFactory.iconIgnorePlacement(true),
-                            PropertyFactory.iconKeepUpright(false),
-                            PropertyFactory.iconOptional(false),
-                            PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                            PropertyFactory.iconSize(1.0f),
-                            PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT),
-                        )
-                    style.addLayer(endpointsLayer)
-
-                    // Replay source + symbol layer (gold plane)
-                    val replaySource = GeoJsonSource(
-                        REPLAY_SOURCE_ID,
-                        FeatureCollection.fromFeatures(emptyList())
-                    )
-                    style.addSource(replaySource)
-                    mapState.replaySource = replaySource
-                    val replayLayer = SymbolLayer(REPLAY_LAYER_ID, REPLAY_SOURCE_ID).withProperties(
-                        PropertyFactory.iconImage(REPLAY_ICON_ID),
-                        PropertyFactory.iconRotate(Expression.get(PROP_HEADING)),
-                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                        PropertyFactory.iconAllowOverlap(true),
-                        PropertyFactory.iconIgnorePlacement(true),
-                        PropertyFactory.iconKeepUpright(false),
-                        PropertyFactory.iconOptional(false),
-                        PropertyFactory.iconSize(1.0f),
-                        PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT),
-                    )
-                    style.addLayer(replayLayer)
-
-                    // Initial draw
-                    mapState.drawPath(detail)
-                    mapState.syncReplay(replayPosition, detail)
-                }
+            val mapView = MapView(ctx).apply {
+                setTileSource(TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                isHorizontalMapRepetitionEnabled = false
+                isVerticalMapRepetitionEnabled = false
+                minZoomLevel = 4.0
+                maxZoomLevel = 19.0
+                zoomController.setVisibility(
+                    org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
+                )
+                val tileSystem = org.osmdroid.views.MapView.getTileSystem()
+                setScrollableAreaLimitLatitude(
+                    tileSystem.maxLatitude,
+                    tileSystem.minLatitude,
+                    0
+                )
+                setScrollableAreaLimitLongitude(
+                    tileSystem.minLongitude,
+                    tileSystem.maxLongitude,
+                    0
+                )
             }
-            mapView.onStart()
-            mapView.onResume()
+            mapState.mapView = mapView
+            mapState.drawPath(detail, startBitmap, endBitmap)
+            mapState.syncReplay(replayPosition, detail, replayBitmap)
             mapView
         },
         update = {
-            mapState.syncReplay(replayPosition, detail)
+            mapState.syncReplay(replayPosition, detail, replayBitmap)
         },
     )
 
     DisposableEffect(Unit) {
         onDispose {
-            mapState.pathSource = null
-            mapState.endpointsSource = null
-            mapState.replaySource = null
-            mapState.map = null
+            mapState.mapView?.onDetach()
+            mapState.mapView = null
         }
     }
 }
 
 private class FlightDetailMapState {
-    var map: MapLibreMap? = null
-    var pathSource: GeoJsonSource? = null
-    var endpointsSource: GeoJsonSource? = null
-    var replaySource: GeoJsonSource? = null
+    var mapView: MapView? = null
+    private var replayMarker: Marker? = null
 
-    fun drawPath(detail: FlightDetail) {
-        val path = pathSource ?: return
-        val endpoints = endpointsSource ?: return
-        val map = map ?: return
+    fun drawPath(
+        detail: FlightDetail,
+        startBitmap: Bitmap,
+        endBitmap: Bitmap,
+    ) {
+        val map = mapView ?: return
         val drawable = detail.drawablePositions
         if (drawable.isEmpty()) return
 
-        // Build path linestring
-        val pathPoints = drawable.map { Point.fromLngLat(it.lon!!, it.lat!!) }
-        val lineFeature = Feature.fromGeometry(LineString.fromLngLats(pathPoints))
-        path.setGeoJson(FeatureCollection.fromFeatures(listOf(lineFeature)))
+        // Draw the route as a polyline
+        val points = drawable.map { GeoPoint(it.lat!!, it.lon!!) }
+        val polyline = Polyline().apply {
+            setPoints(points)
+            outlinePaint.color = 0xFF1976D2.toInt()
+            outlinePaint.strokeWidth = 6f
+        }
+        map.overlays.add(polyline)
 
-        // Build endpoints features
-        val startProps = JsonObject().apply { addProperty(PROP_ROLE, "start") }
-        val endProps = JsonObject().apply { addProperty(PROP_ROLE, "end") }
-        val startFeature = Feature.fromGeometry(pathPoints.first(), startProps)
-        val endFeature = Feature.fromGeometry(pathPoints.last(), endProps)
-        endpoints.setGeoJson(FeatureCollection.fromFeatures(listOf(startFeature, endFeature)))
+        // Start marker (green)
+        val startMarker = Marker(map).apply {
+            position = points.first()
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            icon = BitmapDrawable(map.resources, startBitmap)
+            setInfoWindow(null)
+        }
+        map.overlays.add(startMarker)
+
+        // End marker (red)
+        val endMarker = Marker(map).apply {
+            position = points.last()
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            icon = BitmapDrawable(map.resources, endBitmap)
+            setInfoWindow(null)
+        }
+        map.overlays.add(endMarker)
 
         // Fit camera to bounds
-        val boundsBuilder = LatLngBounds.Builder()
-        drawable.forEach { boundsBuilder.include(LatLng(it.lat!!, it.lon!!)) }
-        map.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100), 600)
+        val lats = points.map { it.latitude }
+        val lons = points.map { it.longitude }
+        val box = BoundingBox(
+            lats.max(),
+            lons.max(),
+            lats.min(),
+            lons.min(),
+        )
+        map.post {
+            map.zoomToBoundingBox(box, true, 100)
+        }
+
+        map.invalidate()
     }
 
-    fun syncReplay(replayPosition: FlightPosition?, detail: FlightDetail) {
-        val src = replaySource ?: return
+    fun syncReplay(
+        replayPosition: FlightPosition?,
+        detail: FlightDetail,
+        replayBitmap: Bitmap,
+    ) {
+        val map = mapView ?: return
+
         if (replayPosition == null || replayPosition.lat == null || replayPosition.lon == null) {
-            src.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
+            replayMarker?.let {
+                map.overlays.remove(it)
+                replayMarker = null
+            }
+            map.invalidate()
             return
         }
+
+        val pos = GeoPoint(replayPosition.lat, replayPosition.lon)
         val rotation = computeReplayHeading(replayPosition, detail)
-        val props = JsonObject().apply {
-            addProperty(PROP_HEADING, rotation)
+
+        val existing = replayMarker
+        if (existing == null) {
+            val newMarker = Marker(map).apply {
+                position = pos
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                icon = BitmapDrawable(map.resources, replayBitmap)
+                this.rotation = -rotation  // osmdroid CCW; aviation CW
+                setInfoWindow(null)
+            }
+            map.overlays.add(newMarker)
+            replayMarker = newMarker
+        } else {
+            existing.position = pos
+            existing.rotation = -rotation
         }
-        val feature = Feature.fromGeometry(
-            Point.fromLngLat(replayPosition.lon, replayPosition.lat),
-            props
-        )
-        src.setGeoJson(FeatureCollection.fromFeatures(listOf(feature)))
+
+        map.invalidate()
     }
 
     /**
      * Compute heading from path geometry: bearing toward the next position.
-     * Falls back to the position's headingDeg if available, else 0.
      */
     private fun computeReplayHeading(
         replay: FlightPosition,

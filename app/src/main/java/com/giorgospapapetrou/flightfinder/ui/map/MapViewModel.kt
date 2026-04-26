@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import java.time.Instant
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -21,6 +23,7 @@ data class MapUiState(
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
     val isStreamConnected: Boolean = false,
+    val now: Instant = Instant.now(),
 ) {
     val aircraftList: List<Aircraft> get() = aircraft.values.toList()
     val selectedAircraft: Aircraft? get() = selectedIcao?.let { aircraft[it] }
@@ -37,6 +40,16 @@ class MapViewModel @Inject constructor(
     init {
         loadInitialSnapshot()
         observeLiveStream()
+        startClockTick()
+    }
+
+    private fun startClockTick() {
+        viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                _uiState.update { it.copy(now = Instant.now()) }
+            }
+        }
     }
 
     private fun loadInitialSnapshot() {

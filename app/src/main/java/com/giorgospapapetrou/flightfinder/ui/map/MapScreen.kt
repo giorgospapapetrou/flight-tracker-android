@@ -5,7 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PointF
+import android.graphics.drawable.BitmapDrawable
+import android.preference.PreferenceManager
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,46 +28,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
-import com.google.gson.JsonObject
-import org.maplibre.android.camera.CameraPosition
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.maps.MapLibreMap
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.Style
-import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.Property
-import org.maplibre.android.style.layers.PropertyFactory
-import org.maplibre.android.style.layers.SymbolLayer
-import org.maplibre.android.style.sources.GeoJsonSource
-import org.maplibre.geojson.Feature
-import org.maplibre.geojson.FeatureCollection
-import org.maplibre.geojson.Point
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import java.time.Instant
 
 private const val DEFAULT_LAT = 34.7
 private const val DEFAULT_LON = 33.0
 private const val DEFAULT_ZOOM = 8.0
-private const val PLANE_ICON_ID = "plane-icon"
-private const val AIRCRAFT_SOURCE_ID = "aircraft-source"
-private const val AIRCRAFT_LAYER_ID = "aircraft-layer"
-private const val PROP_ICAO = "icao"
-private const val PROP_HEADING = "heading"
-
-private const val OSM_STYLE_JSON = """
-{
-  "version": 8,
-  "sources": {
-    "osm": {
-      "type": "raster",
-      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      "tileSize": 256,
-      "attribution": "© OpenStreetMap contributors"
-    }
-  },
-  "layers": [
-    { "id": "osm", "type": "raster", "source": "osm" }
-  ]
-}
-"""
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,8 +48,9 @@ fun MapScreen(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        MapLibreSurface(
+        OsmdroidSurface(
             aircraft = state.aircraftList,
+            now = state.now,
             onAircraftClick = viewModel::selectAircraft,
         )
     }
@@ -112,107 +84,128 @@ private fun AircraftDetailSheet(aircraft: Aircraft) {
 }
 
 @Composable
-private fun MapLibreSurface(
+private fun OsmdroidSurface(
     aircraft: List<Aircraft>,
+    now: Instant,
     onAircraftClick: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val planeBitmap = remember { createPlaneBitmap() }
     val mapState = remember { LiveMapState() }
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
-            val mapView = MapView(ctx)
-            mapView.onCreate(null)
-            mapView.getMapAsync { map ->
-                mapState.map = map
-                mapState.mapView = mapView
-                map.cameraPosition = CameraPosition.Builder()
-                    .target(LatLng(DEFAULT_LAT, DEFAULT_LON))
-                    .zoom(DEFAULT_ZOOM)
-                    .build()
+            // Required osmdroid initialization
+            Configuration.getInstance().load(
+                ctx.applicationContext,
+                PreferenceManager.getDefaultSharedPreferences(ctx.applicationContext)
+            )
+            Configuration.getInstance().userAgentValue = ctx.packageName
 
-                map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
-                    // 1. Register the plane icon as a style image
-                    style.addImage(PLANE_ICON_ID, createPlaneBitmap())
-
-                    // 2. Add the GeoJSON source (initially empty)
-                    val source = GeoJsonSource(AIRCRAFT_SOURCE_ID, FeatureCollection.fromFeatures(emptyList()))
-                    style.addSource(source)
-                    mapState.source = source
-
-                    // 3. Add the symbol layer driven by the source
-                    val layer = SymbolLayer(AIRCRAFT_LAYER_ID, AIRCRAFT_SOURCE_ID).withProperties(
-                        PropertyFactory.iconImage(PLANE_ICON_ID),
-                        PropertyFactory.iconRotate(Expression.get(PROP_HEADING)),
-                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                        PropertyFactory.iconAllowOverlap(true),
-                        PropertyFactory.iconIgnorePlacement(true),
-                        PropertyFactory.iconKeepUpright(false),
-                        PropertyFactory.iconOptional(false),
-                        PropertyFactory.iconSize(1.0f),
-                        PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT),
-                    )
-                    style.addLayer(layer)
-
-                    // 4. Push initial data
-                    mapState.applyAircraft(aircraft)
-
-                    // 5. Tap-to-select via queryRenderedFeatures
-                    map.addOnMapClickListener { latLng ->
-                        val pixel = map.projection.toScreenLocation(latLng)
-                        val features = map.queryRenderedFeatures(
-                            PointF(pixel.x, pixel.y),
-                            AIRCRAFT_LAYER_ID
-                        )
-                        if (features.isNotEmpty()) {
-                            val icao = features.first().getStringProperty(PROP_ICAO)
-                            if (icao != null) {
-                                onAircraftClick(icao)
-                                return@addOnMapClickListener true
-                            }
-                        }
-                        false
-                    }
-                }
+            val mapView = MapView(ctx).apply {
+                setTileSource(TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                isHorizontalMapRepetitionEnabled = false
+                isVerticalMapRepetitionEnabled = false
+                minZoomLevel = 4.0
+                maxZoomLevel = 19.0
+                zoomController.setVisibility(
+                    org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
+                )
+                // Lock pan to valid lat/lon range
+                val tileSystem = org.osmdroid.views.MapView.getTileSystem()
+                setScrollableAreaLimitLatitude(
+                    tileSystem.maxLatitude,
+                    tileSystem.minLatitude,
+                    0
+                )
+                setScrollableAreaLimitLongitude(
+                    tileSystem.minLongitude,
+                    tileSystem.maxLongitude,
+                    0
+                )
+                controller.setZoom(DEFAULT_ZOOM)
+                controller.setCenter(GeoPoint(DEFAULT_LAT, DEFAULT_LON))
             }
-            mapView.onStart()
-            mapView.onResume()
+            mapState.mapView = mapView
+            mapState.applyAircraft(aircraft, now, planeBitmap, onAircraftClick)
             mapView
         },
         update = {
-            mapState.applyAircraft(aircraft)
+            mapState.applyAircraft(aircraft,now,  planeBitmap, onAircraftClick)
         },
     )
 
     DisposableEffect(Unit) {
         onDispose {
-            mapState.source = null
-            mapState.map = null
+            mapState.mapView?.onDetach()
             mapState.mapView = null
         }
     }
 }
 
 private class LiveMapState {
-    var map: MapLibreMap? = null
     var mapView: MapView? = null
-    var source: GeoJsonSource? = null
+    private val markers = mutableMapOf<String, Marker>()
 
-    fun applyAircraft(aircraft: List<Aircraft>) {
-        val src = source ?: return
+    fun applyAircraft(
+        aircraft: List<Aircraft>,
+        now: Instant,
+        planeBitmap: Bitmap,
+        onAircraftClick: (String) -> Unit,
+    ) {
+        val map = mapView ?: return
 
-        val features = aircraft.mapNotNull { a ->
-            val lat = a.lat ?: return@mapNotNull null
-            val lon = a.lon ?: return@mapNotNull null
-            val props = JsonObject().apply {
-                addProperty(PROP_ICAO, a.icao)
-                addProperty(PROP_HEADING, (a.headingDeg ?: 0).toFloat())
+        val seen = mutableSetOf<String>()
+        for (a in aircraft) {
+            val lat = a.lat ?: continue
+            val lon = a.lon ?: continue
+            seen.add(a.icao)
+
+            val rotation = (a.headingDeg ?: 0).toFloat()
+            val alpha = computeAlpha(a.lastPositionAt, now)
+
+            val existing = markers[a.icao]
+            if (existing == null) {
+                val marker = Marker(map).apply {
+                    position = GeoPoint(lat, lon)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    icon = BitmapDrawable(map.resources, planeBitmap)
+                    this.rotation = -rotation
+                    this.alpha = alpha
+                    setOnMarkerClickListener { _, _ ->
+                        onAircraftClick(a.icao)
+                        true
+                    }
+                }
+                map.overlays.add(marker)
+                markers[a.icao] = marker
+            } else {
+                existing.position = GeoPoint(lat, lon)
+                existing.rotation = -rotation
+                existing.alpha = alpha
             }
-            Feature.fromGeometry(Point.fromLngLat(lon, lat), props)
         }
-        src.setGeoJson(FeatureCollection.fromFeatures(features))
+
+        val gone = markers.keys - seen
+        for (icao in gone) {
+            markers[icao]?.let { map.overlays.remove(it) }
+            markers.remove(icao)
+        }
+
+        map.invalidate()
+    }
+
+    private fun computeAlpha(lastPositionAt: Instant?, now: Instant): Float {
+        if (lastPositionAt == null) return 1f
+        val ageSeconds = now.epochSecond - lastPositionAt.epochSecond
+        return when {
+            ageSeconds < 5 -> 1.0f
+            ageSeconds < 30 -> 1.0f - ((ageSeconds - 5) / 25f) * 0.55f  // 1.0 → 0.45
+            ageSeconds < 60 -> 0.45f - ((ageSeconds - 30) / 30f) * 0.30f  // 0.45 → 0.15
+            else -> 0.15f
+        }
     }
 }
 

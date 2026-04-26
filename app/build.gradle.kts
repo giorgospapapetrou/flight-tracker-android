@@ -98,8 +98,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     // Maps
-    implementation(libs.maplibre.native)
-    implementation(libs.maplibre.annotation)
+    implementation(libs.osmdroid)
 
     // Logging
     implementation(libs.timber)
