@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.FlightRepository
 import com.giorgospapapetrou.flightfinder.domain.model.FlightDetail
+import com.giorgospapapetrou.flightfinder.domain.model.FlightPosition
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -16,7 +18,16 @@ data class FlightDetailUiState(
     val detail: FlightDetail? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
-)
+    /** 0.0 = start of flight, 1.0 = end of flight. Null = replay not engaged. */
+    val replayFraction: Float? = null,
+) {
+    /** The interpolated position at the current scrub fraction, or null if not scrubbing. */
+    val replayPosition: FlightPosition?
+        get() {
+            val f = replayFraction ?: return null
+            return detail?.interpolateAt(f.toDouble())
+        }
+}
 
 @HiltViewModel
 class FlightDetailViewModel @Inject constructor(
@@ -41,5 +52,9 @@ class FlightDetailViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    fun setReplayFraction(fraction: Float?) {
+        _uiState.update { it.copy(replayFraction = fraction) }
     }
 }
