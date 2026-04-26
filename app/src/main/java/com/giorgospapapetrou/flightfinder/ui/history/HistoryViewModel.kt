@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.FlightRepository
 import com.giorgospapapetrou.flightfinder.domain.model.FlightSummary
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +41,7 @@ class HistoryViewModel @Inject constructor(
                 Timber.w(t, "Failed to load flights")
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    errorMessage = t.localizedMessage ?: "Failed to load flights",
+                    errorMessage = describeNetworkError(t),
                 )
             }
         }

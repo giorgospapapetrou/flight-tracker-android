@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -59,6 +60,9 @@ private fun AppRoot() {
     var connected by remember { mutableStateOf(false) }
     var currentTab by remember { mutableStateOf(Tab.Map) }
     var openFlightId by remember { mutableStateOf<Int?>(null) }
+    val historyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+
 
     if (!connected) {
         SplashScreen(onConnected = { connected = true })
@@ -66,6 +70,10 @@ private fun AppRoot() {
     }
 
     val openFlight = openFlightId
+
+    BackHandler(enabled = openFlight != null) {
+        openFlightId = null
+    }
 
     Scaffold(
         topBar = {
@@ -106,6 +114,7 @@ private fun AppRoot() {
                     Tab.Map -> MapScreen()
                     Tab.Aircraft -> AircraftListScreen()
                     Tab.History -> HistoryScreen(
+                        listState = historyListState,
                         onFlightClick = { id -> openFlightId = id }
                     )
                 }

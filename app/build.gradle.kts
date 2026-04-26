@@ -99,6 +99,7 @@ dependencies {
 
     // Maps
     implementation(libs.maplibre.native)
+    implementation(libs.maplibre.annotation)
 
     // Logging
     implementation(libs.timber)

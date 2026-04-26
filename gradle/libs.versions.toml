@@ -51,6 +51,7 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 maplibre-native = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibreNative" }
+maplibre-annotation = { group = "org.maplibre.gl", name = "android-plugin-annotation-v9", version = "3.0.2" }
 
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
 

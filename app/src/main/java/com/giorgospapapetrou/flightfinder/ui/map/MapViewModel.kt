@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.AircraftRepository
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
 import com.giorgospapapetrou.flightfinder.domain.model.AircraftEvent
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +51,7 @@ class MapViewModel @Inject constructor(
             } catch (t: Throwable) {
                 Timber.w(t, "Initial snapshot failed")
                 _uiState.update {
-                    it.copy(isLoading = false, errorMessage = t.localizedMessage ?: "Load failed")
+                    it.copy(isLoading = false, errorMessage = describeNetworkError(t))
                 }
             }
         }

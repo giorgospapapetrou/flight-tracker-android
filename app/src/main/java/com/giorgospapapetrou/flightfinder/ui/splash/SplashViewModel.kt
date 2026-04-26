@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.HealthRepository
 import com.giorgospapapetrou.flightfinder.domain.model.HealthStatus
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,9 +40,7 @@ class SplashViewModel @Inject constructor(
                 Timber.i("Backend connected: %s", status)
             } catch (t: Throwable) {
                 Timber.w(t, "Health check failed")
-                _uiState.value = SplashUiState.Failed(
-                    t.localizedMessage ?: "Backend unreachable"
-                )
+                _uiState.value = SplashUiState.Failed(describeNetworkError(t))
             }
         }
     }

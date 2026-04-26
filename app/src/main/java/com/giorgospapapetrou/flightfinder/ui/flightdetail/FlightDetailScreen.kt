@@ -3,7 +3,6 @@ package com.giorgospapapetrou.flightfinder.ui.flightdetail
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.foundation.layout.Arrangement
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,19 +35,29 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.giorgospapapetrou.flightfinder.domain.model.FlightDetail
 import com.giorgospapapetrou.flightfinder.domain.model.FlightPosition
 import com.giorgospapapetrou.flightfinder.domain.model.FlightSummary
-import org.maplibre.android.annotations.IconFactory
-import org.maplibre.android.annotations.Marker
-import org.maplibre.android.annotations.MarkerOptions
-import org.maplibre.android.annotations.PolylineOptions
+import com.google.gson.JsonObject
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 private const val OSM_STYLE_JSON = """
 {
@@ -67,6 +75,23 @@ private const val OSM_STYLE_JSON = """
   ]
 }
 """
+
+// Style image IDs
+private const val START_ICON_ID = "fd-start-icon"
+private const val END_ICON_ID = "fd-end-icon"
+private const val REPLAY_ICON_ID = "fd-replay-plane-icon"
+
+// Sources & layers
+private const val PATH_SOURCE_ID = "fd-path-source"
+private const val PATH_LAYER_ID = "fd-path-layer"
+private const val ENDPOINTS_SOURCE_ID = "fd-endpoints-source"
+private const val ENDPOINTS_LAYER_ID = "fd-endpoints-layer"
+private const val REPLAY_SOURCE_ID = "fd-replay-source"
+private const val REPLAY_LAYER_ID = "fd-replay-layer"
+
+// Feature properties
+private const val PROP_ROLE = "role"  // "start" or "end"
+private const val PROP_HEADING = "heading"
 
 @Composable
 fun FlightDetailScreen(
@@ -182,7 +207,6 @@ private fun FlightSummaryCard(
                 }
             }
 
-            // When scrubbing, show the live state below
             if (replayPosition != null) {
                 Spacer(modifier = Modifier.padding(top = 8.dp))
                 Row(
@@ -245,17 +269,13 @@ private fun ReplayControls(
 }
 
 @Composable
-@Suppress("DEPRECATION")
 private fun FlightPathMap(
     detail: FlightDetail,
     replayPosition: FlightPosition?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val mapHolder = remember { mutableMapOf<String, MapLibreMap>() }
-    val replayMarkerHolder = remember { mutableMapOf<String, Marker>() }
-    val pathDrawn = remember { mutableMapOf<String, Boolean>() }
-    val planeBitmap = remember { createPlaneBitmap() }
+    val mapState = remember { FlightDetailMapState() }
 
     AndroidView(
         modifier = modifier,
@@ -263,11 +283,79 @@ private fun FlightPathMap(
             val mapView = MapView(ctx)
             mapView.onCreate(null)
             mapView.getMapAsync { map ->
-                mapHolder["map"] = map
-                map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) {
-                    drawPath(map, detail)
-                    pathDrawn["drawn"] = true
-                    syncReplayMarker(ctx, map, replayMarkerHolder, replayPosition, planeBitmap)
+                mapState.map = map
+                map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
+                    // Register icons
+                    style.addImage(START_ICON_ID, createDotBitmap(0xFF2E7D32.toInt()))
+                    style.addImage(END_ICON_ID, createDotBitmap(0xFFC62828.toInt()))
+                    style.addImage(REPLAY_ICON_ID, createPlaneBitmap(0xFFFFB300.toInt()))
+
+                    // Path source + line layer
+                    val pathSource = GeoJsonSource(
+                        PATH_SOURCE_ID,
+                        FeatureCollection.fromFeatures(emptyList())
+                    )
+                    style.addSource(pathSource)
+                    mapState.pathSource = pathSource
+                    val pathLayer = LineLayer(PATH_LAYER_ID, PATH_SOURCE_ID).withProperties(
+                        PropertyFactory.lineColor("#1976D2"),
+                        PropertyFactory.lineWidth(3f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    )
+                    style.addLayer(pathLayer)
+
+                    // Endpoints source + symbol layer (start/end pins)
+                    val endpointsSource = GeoJsonSource(
+                        ENDPOINTS_SOURCE_ID,
+                        FeatureCollection.fromFeatures(emptyList())
+                    )
+                    style.addSource(endpointsSource)
+                    mapState.endpointsSource = endpointsSource
+                    val endpointsLayer = SymbolLayer(ENDPOINTS_LAYER_ID, ENDPOINTS_SOURCE_ID)
+                        .withProperties(
+                            PropertyFactory.iconImage(
+                                Expression.match(
+                                    Expression.get(PROP_ROLE),
+                                    Expression.literal(END_ICON_ID),
+                                    Expression.stop(Expression.literal("start"), Expression.literal(START_ICON_ID)),
+                                    Expression.stop(Expression.literal("end"), Expression.literal(END_ICON_ID)),
+                                )
+                            ),
+                            PropertyFactory.iconAllowOverlap(true),
+                            PropertyFactory.iconIgnorePlacement(true),
+                            PropertyFactory.iconKeepUpright(false),
+                            PropertyFactory.iconOptional(false),
+                            PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
+                            PropertyFactory.iconSize(1.0f),
+                            PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT),
+                        )
+                    style.addLayer(endpointsLayer)
+
+                    // Replay source + symbol layer (gold plane)
+                    val replaySource = GeoJsonSource(
+                        REPLAY_SOURCE_ID,
+                        FeatureCollection.fromFeatures(emptyList())
+                    )
+                    style.addSource(replaySource)
+                    mapState.replaySource = replaySource
+                    val replayLayer = SymbolLayer(REPLAY_LAYER_ID, REPLAY_SOURCE_ID).withProperties(
+                        PropertyFactory.iconImage(REPLAY_ICON_ID),
+                        PropertyFactory.iconRotate(Expression.get(PROP_HEADING)),
+                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
+                        PropertyFactory.iconAllowOverlap(true),
+                        PropertyFactory.iconIgnorePlacement(true),
+                        PropertyFactory.iconKeepUpright(false),
+                        PropertyFactory.iconOptional(false),
+                        PropertyFactory.iconSize(1.0f),
+                        PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_POINT),
+                    )
+                    style.addLayer(replayLayer)
+
+                    // Initial draw
+                    mapState.drawPath(detail)
+                    mapState.syncReplay(replayPosition, detail)
                 }
             }
             mapView.onStart()
@@ -275,84 +363,110 @@ private fun FlightPathMap(
             mapView
         },
         update = {
-            val map = mapHolder["map"] ?: return@AndroidView
-            if (pathDrawn["drawn"] != true) return@AndroidView
-            syncReplayMarker(context, map, replayMarkerHolder, replayPosition, planeBitmap)
+            mapState.syncReplay(replayPosition, detail)
         },
     )
 
     DisposableEffect(Unit) {
         onDispose {
-            mapHolder.clear()
-            replayMarkerHolder.clear()
-            pathDrawn.clear()
+            mapState.pathSource = null
+            mapState.endpointsSource = null
+            mapState.replaySource = null
+            mapState.map = null
         }
     }
 }
 
-@Suppress("DEPRECATION")
-private fun drawPath(
-    map: MapLibreMap,
-    detail: FlightDetail,
-) {
-    map.clear()
-    val points = detail.drawablePositions.map { LatLng(it.lat!!, it.lon!!) }
-    if (points.isEmpty()) return
+private class FlightDetailMapState {
+    var map: MapLibreMap? = null
+    var pathSource: GeoJsonSource? = null
+    var endpointsSource: GeoJsonSource? = null
+    var replaySource: GeoJsonSource? = null
 
-    val polyline = PolylineOptions()
-        .addAll(points)
-        .color(0xFF1976D2.toInt())
-        .width(3f)
-    map.addPolyline(polyline)
+    fun drawPath(detail: FlightDetail) {
+        val path = pathSource ?: return
+        val endpoints = endpointsSource ?: return
+        val map = map ?: return
+        val drawable = detail.drawablePositions
+        if (drawable.isEmpty()) return
 
-    map.addMarker(MarkerOptions().position(points.first()).title("Start"))
-    map.addMarker(MarkerOptions().position(points.last()).title("End"))
+        // Build path linestring
+        val pathPoints = drawable.map { Point.fromLngLat(it.lon!!, it.lat!!) }
+        val lineFeature = Feature.fromGeometry(LineString.fromLngLats(pathPoints))
+        path.setGeoJson(FeatureCollection.fromFeatures(listOf(lineFeature)))
 
-    val boundsBuilder = LatLngBounds.Builder()
-    points.forEach { boundsBuilder.include(it) }
-    val bounds = boundsBuilder.build()
-    map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100), 600)
-}
+        // Build endpoints features
+        val startProps = JsonObject().apply { addProperty(PROP_ROLE, "start") }
+        val endProps = JsonObject().apply { addProperty(PROP_ROLE, "end") }
+        val startFeature = Feature.fromGeometry(pathPoints.first(), startProps)
+        val endFeature = Feature.fromGeometry(pathPoints.last(), endProps)
+        endpoints.setGeoJson(FeatureCollection.fromFeatures(listOf(startFeature, endFeature)))
 
-@Suppress("DEPRECATION")
-private fun syncReplayMarker(
-    context: android.content.Context,
-    map: MapLibreMap,
-    holder: MutableMap<String, Marker>,
-    replayPosition: FlightPosition?,
-    planeBitmap: Bitmap,
-) {
-    val existing = holder["replay"]
-    if (replayPosition == null || replayPosition.lat == null || replayPosition.lon == null) {
-        if (existing != null) {
-            map.removeMarker(existing)
-            holder.remove("replay")
+        // Fit camera to bounds
+        val boundsBuilder = LatLngBounds.Builder()
+        drawable.forEach { boundsBuilder.include(LatLng(it.lat!!, it.lon!!)) }
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100), 600)
+    }
+
+    fun syncReplay(replayPosition: FlightPosition?, detail: FlightDetail) {
+        val src = replaySource ?: return
+        if (replayPosition == null || replayPosition.lat == null || replayPosition.lon == null) {
+            src.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
+            return
         }
-        return
+        val rotation = computeReplayHeading(replayPosition, detail)
+        val props = JsonObject().apply {
+            addProperty(PROP_HEADING, rotation)
+        }
+        val feature = Feature.fromGeometry(
+            Point.fromLngLat(replayPosition.lon, replayPosition.lat),
+            props
+        )
+        src.setGeoJson(FeatureCollection.fromFeatures(listOf(feature)))
     }
-    val pos = LatLng(replayPosition.lat, replayPosition.lon)
-    val rotated = rotateBitmap(planeBitmap, (replayPosition.headingDeg ?: 0).toFloat())
-    val icon = IconFactory.getInstance(context).fromBitmap(rotated)
 
-    if (existing == null) {
-        val m = map.addMarker(MarkerOptions().position(pos).icon(icon))
-        holder["replay"] = m
-    } else {
-        existing.position = pos
-        existing.icon = icon
+    /**
+     * Compute heading from path geometry: bearing toward the next position.
+     * Falls back to the position's headingDeg if available, else 0.
+     */
+    private fun computeReplayHeading(
+        replay: FlightPosition,
+        detail: FlightDetail,
+    ): Float {
+        val points = detail.drawablePositions
+        if (points.size < 2) return (replay.headingDeg ?: 0).toFloat()
+
+        val replayMs = replay.timestamp.toEpochMilli()
+        val next = points.firstOrNull { it.timestamp.toEpochMilli() > replayMs }
+            ?: return (replay.headingDeg ?: 0).toFloat()
+
+        val lat = replay.lat ?: return (replay.headingDeg ?: 0).toFloat()
+        val lon = replay.lon ?: return (replay.headingDeg ?: 0).toFloat()
+        return bearing(lat, lon, next.lat!!, next.lon!!)
+    }
+
+    private fun bearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val phi1 = Math.toRadians(lat1)
+        val phi2 = Math.toRadians(lat2)
+        val deltaLambda = Math.toRadians(lon2 - lon1)
+        val y = sin(deltaLambda) * cos(phi2)
+        val x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(deltaLambda)
+        val theta = atan2(y, x)
+        val deg = (Math.toDegrees(theta) + 360.0) % 360.0
+        return deg.toFloat()
     }
 }
 
-private fun createPlaneBitmap(): Bitmap {
+private fun createPlaneBitmap(color: Int): Bitmap {
     val size = 72
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFB300") // amber gold
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
         style = Paint.Style.FILL
     }
     val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#5D4037")
+        this.color = Color.parseColor("#5D4037")
         style = Paint.Style.STROKE
         strokeWidth = 3f
     }
@@ -363,12 +477,25 @@ private fun createPlaneBitmap(): Bitmap {
         lineTo(12f, size - 16f)
         close()
     }
-    canvas.drawPath(path, paint)
+    canvas.drawPath(path, fill)
     canvas.drawPath(path, outline)
     return bmp
 }
 
-private fun rotateBitmap(src: Bitmap, degrees: Float): Bitmap {
-    val matrix = Matrix().apply { postRotate(degrees) }
-    return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+private fun createDotBitmap(color: Int): Bitmap {
+    val size = 36
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.FILL
+    }
+    val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+    }
+    canvas.drawCircle(size / 2f, size / 2f, size / 2f - 4f, fill)
+    canvas.drawCircle(size / 2f, size / 2f, size / 2f - 4f, ring)
+    return bmp
 }

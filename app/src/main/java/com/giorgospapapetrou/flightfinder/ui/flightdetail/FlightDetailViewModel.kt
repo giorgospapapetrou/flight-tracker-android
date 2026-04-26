@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.giorgospapapetrou.flightfinder.data.repository.FlightRepository
 import com.giorgospapapetrou.flightfinder.domain.model.FlightDetail
 import com.giorgospapapetrou.flightfinder.domain.model.FlightPosition
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,7 +49,7 @@ class FlightDetailViewModel @Inject constructor(
                 Timber.w(t, "Failed to load flight $flightId")
                 _uiState.value = FlightDetailUiState(
                     isLoading = false,
-                    errorMessage = t.localizedMessage ?: "Failed to load flight",
+                    errorMessage = describeNetworkError(t),
                 )
             }
         }
