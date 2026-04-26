@@ -416,20 +416,36 @@ private fun createPlaneBitmap(color: Int): Bitmap {
     val size = 72
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
+    val cx = size / 2f
+
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         style = Paint.Style.FILL
     }
     val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = Color.parseColor("#5D4037")
+        this.color = Color.argb(180, 20, 28, 36)
         style = Paint.Style.STROKE
-        strokeWidth = 3f
+        strokeWidth = 2.5f
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
     val path = Path().apply {
-        moveTo(size / 2f, 8f)
-        lineTo(size - 12f, size - 16f)
-        lineTo(size / 2f, size - 24f)
-        lineTo(12f, size - 16f)
+        moveTo(cx, 8f)
+        lineTo(cx + 4f, 28f)
+        lineTo(size - 6f, 40f)
+        lineTo(size - 6f, 46f)
+        lineTo(cx + 4f, 42f)
+        lineTo(cx + 3f, 56f)
+        lineTo(cx + 14f, 62f)
+        lineTo(cx + 14f, 65f)
+        lineTo(cx, 64f)
+        lineTo(cx - 14f, 65f)
+        lineTo(cx - 14f, 62f)
+        lineTo(cx - 3f, 56f)
+        lineTo(cx - 4f, 42f)
+        lineTo(6f, 46f)
+        lineTo(6f, 40f)
+        lineTo(cx - 4f, 28f)
         close()
     }
     canvas.drawPath(path, fill)

@@ -33,7 +33,6 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
-import java.time.Instant
 
 private const val DEFAULT_LAT = 34.7
 private const val DEFAULT_LON = 33.0
@@ -50,7 +49,6 @@ fun MapScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         OsmdroidSurface(
             aircraft = state.aircraftList,
-            now = state.now,
             onAircraftClick = viewModel::selectAircraft,
         )
     }
@@ -86,17 +84,14 @@ private fun AircraftDetailSheet(aircraft: Aircraft) {
 @Composable
 private fun OsmdroidSurface(
     aircraft: List<Aircraft>,
-    now: Instant,
     onAircraftClick: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val planeBitmap = remember { createPlaneBitmap() }
     val mapState = remember { LiveMapState() }
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
-            // Required osmdroid initialization
             Configuration.getInstance().load(
                 ctx.applicationContext,
                 PreferenceManager.getDefaultSharedPreferences(ctx.applicationContext)
@@ -113,7 +108,6 @@ private fun OsmdroidSurface(
                 zoomController.setVisibility(
                     org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER
                 )
-                // Lock pan to valid lat/lon range
                 val tileSystem = org.osmdroid.views.MapView.getTileSystem()
                 setScrollableAreaLimitLatitude(
                     tileSystem.maxLatitude,
@@ -129,11 +123,11 @@ private fun OsmdroidSurface(
                 controller.setCenter(GeoPoint(DEFAULT_LAT, DEFAULT_LON))
             }
             mapState.mapView = mapView
-            mapState.applyAircraft(aircraft, now, planeBitmap, onAircraftClick)
+            mapState.applyAircraft(aircraft, onAircraftClick)
             mapView
         },
         update = {
-            mapState.applyAircraft(aircraft,now,  planeBitmap, onAircraftClick)
+            mapState.applyAircraft(aircraft, onAircraftClick)
         },
     )
 
@@ -151,10 +145,9 @@ private class LiveMapState {
 
     fun applyAircraft(
         aircraft: List<Aircraft>,
-        now: Instant,
-        planeBitmap: Bitmap,
         onAircraftClick: (String) -> Unit,
     ) {
+        timber.log.Timber.d("applyAircraft called with ${aircraft.size} aircraft")
         val map = mapView ?: return
 
         val seen = mutableSetOf<String>()
@@ -164,16 +157,16 @@ private class LiveMapState {
             seen.add(a.icao)
 
             val rotation = (a.headingDeg ?: 0).toFloat()
-            val alpha = computeAlpha(a.lastPositionAt, now)
+            val planeColor = colorForAltitude(a.altitudeFt)
 
             val existing = markers[a.icao]
             if (existing == null) {
+                val bitmap = createPlaneBitmap(planeColor)
                 val marker = Marker(map).apply {
                     position = GeoPoint(lat, lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = BitmapDrawable(map.resources, planeBitmap)
+                    icon = BitmapDrawable(map.resources, bitmap)
                     this.rotation = -rotation
-                    this.alpha = alpha
                     setOnMarkerClickListener { _, _ ->
                         onAircraftClick(a.icao)
                         true
@@ -182,9 +175,10 @@ private class LiveMapState {
                 map.overlays.add(marker)
                 markers[a.icao] = marker
             } else {
+                val newBitmap = createPlaneBitmap(planeColor)
+                existing.icon = BitmapDrawable(map.resources, newBitmap)
                 existing.position = GeoPoint(lat, lon)
                 existing.rotation = -rotation
-                existing.alpha = alpha
             }
         }
 
@@ -196,34 +190,54 @@ private class LiveMapState {
 
         map.invalidate()
     }
+}
 
-    private fun computeAlpha(lastPositionAt: Instant?, now: Instant): Float {
-        if (lastPositionAt == null) return 1f
-        val ageSeconds = now.epochSecond - lastPositionAt.epochSecond
-        return when {
-            ageSeconds < 5 -> 1.0f
-            ageSeconds < 30 -> 1.0f - ((ageSeconds - 5) / 25f) * 0.55f  // 1.0 → 0.45
-            ageSeconds < 60 -> 0.45f - ((ageSeconds - 30) / 30f) * 0.30f  // 0.45 → 0.15
-            else -> 0.15f
-        }
+private fun colorForAltitude(altitudeFt: Int?): Int {
+    return when {
+        altitudeFt == null -> Color.parseColor("#94A3B8")
+        altitudeFt < 10_000 -> Color.parseColor("#FB923C")
+        altitudeFt < 30_000 -> Color.parseColor("#0EA5E9")
+        else -> Color.parseColor("#1E40AF")
     }
 }
 
-private fun createPlaneBitmap(): Bitmap {
-    val size = 64
+private fun createPlaneBitmap(color: Int): Bitmap {
+    val size = 72
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#1976D2")
+    val cx = size / 2f
+
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
         style = Paint.Style.FILL
     }
+    val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Color.argb(180, 20, 28, 36)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
     val path = Path().apply {
-        moveTo(size / 2f, 8f)
-        lineTo(size - 12f, size - 16f)
-        lineTo(size / 2f, size - 24f)
-        lineTo(12f, size - 16f)
+        moveTo(cx, 8f)
+        lineTo(cx + 4f, 28f)
+        lineTo(size - 6f, 40f)
+        lineTo(size - 6f, 46f)
+        lineTo(cx + 4f, 42f)
+        lineTo(cx + 3f, 56f)
+        lineTo(cx + 14f, 62f)
+        lineTo(cx + 14f, 65f)
+        lineTo(cx, 64f)
+        lineTo(cx - 14f, 65f)
+        lineTo(cx - 14f, 62f)
+        lineTo(cx - 3f, 56f)
+        lineTo(cx - 4f, 42f)
+        lineTo(6f, 46f)
+        lineTo(6f, 40f)
+        lineTo(cx - 4f, 28f)
         close()
     }
-    canvas.drawPath(path, paint)
+    canvas.drawPath(path, fill)
+    canvas.drawPath(path, outline)
     return bmp
 }

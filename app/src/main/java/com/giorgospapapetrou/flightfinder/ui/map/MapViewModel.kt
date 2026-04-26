@@ -2,18 +2,16 @@ package com.giorgospapapetrou.flightfinder.ui.map
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import com.giorgospapapetrou.flightfinder.data.repository.AircraftRepository
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
 import com.giorgospapapetrou.flightfinder.domain.model.AircraftEvent
-import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import java.time.Instant
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -23,7 +21,6 @@ data class MapUiState(
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
     val isStreamConnected: Boolean = false,
-    val now: Instant = Instant.now(),
 ) {
     val aircraftList: List<Aircraft> get() = aircraft.values.toList()
     val selectedAircraft: Aircraft? get() = selectedIcao?.let { aircraft[it] }
@@ -40,16 +37,6 @@ class MapViewModel @Inject constructor(
     init {
         loadInitialSnapshot()
         observeLiveStream()
-        startClockTick()
-    }
-
-    private fun startClockTick() {
-        viewModelScope.launch {
-            while (true) {
-                delay(1000)
-                _uiState.update { it.copy(now = Instant.now()) }
-            }
-        }
     }
 
     private fun loadInitialSnapshot() {

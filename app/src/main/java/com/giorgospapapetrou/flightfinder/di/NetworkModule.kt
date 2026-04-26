@@ -16,6 +16,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import okhttp3.Protocol
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -40,6 +41,7 @@ object NetworkModule {
         }
 
         return OkHttpClient.Builder()
+            .protocols(listOf(Protocol.HTTP_1_1))
             .addInterceptor(AuthInterceptor(BuildConfig.API_KEY))
             .addInterceptor(logging)
             .connectTimeout(ApiConstants.CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
