@@ -3,10 +3,12 @@ package com.giorgospapapetrou.flightfinder.ui.flightdetail
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.BitmapDrawable
 import android.preference.PreferenceManager
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +16,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,14 +33,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.giorgospapapetrou.flightfinder.domain.model.FlightDetail
 import com.giorgospapapetrou.flightfinder.domain.model.FlightPosition
 import com.giorgospapapetrou.flightfinder.domain.model.FlightSummary
+import com.giorgospapapetrou.flightfinder.ui.theme.BgCard
+import com.giorgospapapetrou.flightfinder.ui.theme.OnSurfaceDark
+import com.giorgospapapetrou.flightfinder.ui.theme.OnSurfaceVar
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
@@ -50,6 +59,8 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+
+private val OutlineDark = androidx.compose.ui.graphics.Color(0xFF2A2A3A)
 
 @Composable
 fun FlightDetailScreen(
@@ -102,7 +113,7 @@ private fun FlightDetailContent(
             replayPosition = replayPosition,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(16.dp),
+                .padding(14.dp),
         )
 
         if (detail.drawablePositions.size >= 2) {
@@ -112,7 +123,7 @@ private fun FlightDetailContent(
                 onFractionChange = onReplayFractionChange,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(16.dp),
+                    .padding(14.dp),
             )
         }
     }
@@ -131,56 +142,84 @@ private fun FlightSummaryCard(
 
     Card(
         modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
+            containerColor = BgCard.copy(alpha = 0.92f),
         ),
+        border = BorderStroke(1.dp, OutlineDark),
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Text(
                 text = summary.displayName,
-                style = MaterialTheme.typography.titleMedium,
+                color = OnSurfaceDark,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             if (summary.aircraftType != null) {
                 Text(
                     text = summary.aircraftType,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = OnSurfaceVar,
+                    fontSize = 11.sp,
                 )
             }
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            Spacer(Modifier.height(4.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
                 val start = timeFormatter.format(summary.startedAt.atZone(zone))
                 val end = if (summary.isLiveAt(now)) "live"
-                else summary.effectiveEndAt?.let { timeFormatter.format(it.atZone(zone)) } ?: "—"
+                else summary.effectiveEndAt?.let { timeFormatter.format(it.atZone(zone)) } ?: "\u2014"
                 Text(
-                    text = "$start → $end",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "$start \u2192 $end",
+                    color = OnSurfaceVar,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
                     modifier = Modifier.weight(1f),
                 )
                 summary.maxAltitudeFt?.let {
                     Text(
-                        text = "${it} ft",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "$it ft",
+                        color = OnSurfaceVar,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
                     )
                 }
             }
 
             if (replayPosition != null) {
-                Spacer(modifier = Modifier.padding(top = 8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     val tLabel = timeFormatter.format(replayPosition.timestamp.atZone(zone))
-                    Text(text = "@ $tLabel", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = "@ $tLabel",
+                        color = OnSurfaceDark,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
                     replayPosition.altitudeFt?.let {
-                        Text(text = "${it} ft", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "$it ft",
+                            color = OnSurfaceDark,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                        )
                     }
                     replayPosition.groundSpeedKt?.let {
-                        Text(text = "${it} kt", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "$it kt",
+                            color = OnSurfaceDark,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                        )
                     }
                     replayPosition.headingDeg?.let {
-                        Text(text = "${it}°", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "$it\u00B0",
+                            color = OnSurfaceDark,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                        )
                     }
                 }
             }
@@ -204,11 +243,13 @@ private fun ReplayControls(
 
     Card(
         modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
+            containerColor = BgCard.copy(alpha = 0.92f),
         ),
+        border = BorderStroke(1.dp, OutlineDark),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             Slider(
                 value = fraction,
                 onValueChange = { onFractionChange(it) },
@@ -218,9 +259,24 @@ private fun ReplayControls(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(text = firstLabel, style = MaterialTheme.typography.bodySmall)
-                Text(text = "Replay", style = MaterialTheme.typography.bodySmall)
-                Text(text = lastLabel, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = firstLabel,
+                    color = OnSurfaceVar,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    text = "Replay",
+                    color = OnSurfaceVar,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = lastLabel,
+                    color = OnSurfaceVar,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
             }
         }
     }
@@ -290,6 +346,9 @@ private fun FlightPathMap(
 private class FlightDetailMapState {
     var mapView: MapView? = null
     private var replayMarker: Marker? = null
+    private var activePolyline: Polyline? = null
+    private var allPoints: List<GeoPoint> = emptyList()
+    private var allTimestamps: List<Long> = emptyList()
 
     fun drawPath(
         detail: FlightDetail,
@@ -300,14 +359,28 @@ private class FlightDetailMapState {
         val drawable = detail.drawablePositions
         if (drawable.isEmpty()) return
 
-        // Draw the route as a polyline
         val points = drawable.map { GeoPoint(it.lat!!, it.lon!!) }
-        val polyline = Polyline().apply {
+        allPoints = points
+        allTimestamps = drawable.map { it.timestamp.toEpochMilli() }
+
+        // Ghost route — full path, dashed white, semi-transparent
+        val ghostPolyline = Polyline().apply {
             setPoints(points)
+            outlinePaint.color = Color.WHITE
+            outlinePaint.alpha = 90 // ~35%
+            outlinePaint.strokeWidth = 4f
+            outlinePaint.pathEffect = DashPathEffect(floatArrayOf(14f, 10f), 0f)
+        }
+        map.overlays.add(ghostPolyline)
+
+        // Active route — solid blue, will be updated as replay progresses
+        val active = Polyline().apply {
+            setPoints(points) // initially full
             outlinePaint.color = 0xFF1976D2.toInt()
             outlinePaint.strokeWidth = 6f
         }
-        map.overlays.add(polyline)
+        map.overlays.add(active)
+        activePolyline = active
 
         // Start marker (green)
         val startMarker = Marker(map).apply {
@@ -351,13 +424,24 @@ private class FlightDetailMapState {
         val map = mapView ?: return
 
         if (replayPosition == null || replayPosition.lat == null || replayPosition.lon == null) {
+            // No active scrubbing — show full active route, no marker
             replayMarker?.let {
                 map.overlays.remove(it)
                 replayMarker = null
             }
+            activePolyline?.setPoints(allPoints)
             map.invalidate()
             return
         }
+
+        // Trim active polyline to up-to-replay segment + interpolated point
+        val replayMs = replayPosition.timestamp.toEpochMilli()
+        val cutoffIndex = allTimestamps.indexOfLast { it <= replayMs }
+            .let { if (it < 0) 0 else it }
+        val trimmed = allPoints.take(cutoffIndex + 1).toMutableList()
+        // Append the interpolated current position so the line ends at the marker
+        trimmed.add(GeoPoint(replayPosition.lat, replayPosition.lon))
+        activePolyline?.setPoints(trimmed)
 
         val pos = GeoPoint(replayPosition.lat, replayPosition.lon)
         val rotation = computeReplayHeading(replayPosition, detail)
@@ -368,7 +452,7 @@ private class FlightDetailMapState {
                 position = pos
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 icon = BitmapDrawable(map.resources, replayBitmap)
-                this.rotation = -rotation  // osmdroid CCW; aviation CW
+                this.rotation = -rotation
                 setInfoWindow(null)
             }
             map.overlays.add(newMarker)
@@ -381,9 +465,6 @@ private class FlightDetailMapState {
         map.invalidate()
     }
 
-    /**
-     * Compute heading from path geometry: bearing toward the next position.
-     */
     private fun computeReplayHeading(
         replay: FlightPosition,
         detail: FlightDetail,
