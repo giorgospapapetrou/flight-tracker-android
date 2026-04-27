@@ -7,13 +7,20 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.BitmapDrawable
 import android.preference.PreferenceManager
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -21,13 +28,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
+import com.giorgospapapetrou.flightfinder.ui.theme.AircraftBlueLt
+import com.giorgospapapetrou.flightfinder.ui.theme.BgCard
+import com.giorgospapapetrou.flightfinder.ui.theme.NavActiveBg
+import com.giorgospapapetrou.flightfinder.ui.theme.OnSurfaceDark
+import com.giorgospapapetrou.flightfinder.ui.theme.OnSurfaceVar
+import com.giorgospapapetrou.flightfinder.ui.theme.StartGreen
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -37,6 +55,8 @@ import org.osmdroid.views.overlay.Marker
 private const val DEFAULT_LAT = 34.7
 private const val DEFAULT_LON = 33.0
 private const val DEFAULT_ZOOM = 8.0
+
+private val DividerDark = androidx.compose.ui.graphics.Color(0xFF252535)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,6 +78,8 @@ fun MapScreen(
         ModalBottomSheet(
             onDismissRequest = { viewModel.selectAircraft(null) },
             sheetState = sheetState,
+            containerColor = BgCard,
+            dragHandle = null,
         ) {
             AircraftDetailSheet(selected)
         }
@@ -66,18 +88,105 @@ fun MapScreen(
 
 @Composable
 private fun AircraftDetailSheet(aircraft: Aircraft) {
-    Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
-        Text(
-            text = aircraft.callsign?.takeIf { it.isNotBlank() } ?: aircraft.icao,
-            style = MaterialTheme.typography.headlineSmall,
-        )
-        if (aircraft.aircraftType != null) {
-            Text(text = aircraft.aircraftType)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        // Header: icon box + title/ICAO + LIVE pill
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NavActiveBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "\u2708",
+                    color = AircraftBlueLt,
+                    fontSize = 20.sp,
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = aircraft.callsign?.takeIf { it.isNotBlank() } ?: aircraft.icao,
+                        color = OnSurfaceDark,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    LivePill()
+                }
+                Text(
+                    text = "ICAO ${aircraft.icao}",
+                    color = OnSurfaceVar,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
-        Text(text = "ICAO: ${aircraft.icao}", style = MaterialTheme.typography.bodySmall)
-        aircraft.altitudeFt?.let { Text("Altitude: $it ft") }
-        aircraft.groundSpeedKt?.let { Text("Speed: $it kt") }
-        aircraft.headingDeg?.let { Text("Heading: $it°") }
+
+        Spacer(Modifier.height(14.dp))
+        HorizontalDivider(color = DividerDark)
+        Spacer(Modifier.height(14.dp))
+
+        // Telemetry row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround,
+        ) {
+            TelemetryCell("ALT", aircraft.altitudeFt?.let { "$it ft" })
+            TelemetryCell("SPD", aircraft.groundSpeedKt?.let { "$it kt" })
+            TelemetryCell("HDG", aircraft.headingDeg?.let { "$it\u00B0" })
+        }
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun LivePill() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(StartGreen.copy(alpha = 0.18f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "LIVE",
+            color = StartGreen,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp,
+        )
+    }
+}
+
+@Composable
+private fun TelemetryCell(label: String, value: String?) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            color = OnSurfaceVar,
+            fontSize = 10.sp,
+            letterSpacing = 0.8.sp,
+            fontWeight = FontWeight.Normal,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = value ?: "\u2014",
+            color = OnSurfaceDark,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
