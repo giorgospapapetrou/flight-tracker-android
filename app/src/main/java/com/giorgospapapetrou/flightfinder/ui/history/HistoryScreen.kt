@@ -219,21 +219,30 @@ private fun LivePill() {
 }
 
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val dateFormatter = DateTimeFormatter.ofPattern("MMM d")
 
 private fun formatTimeRange(flight: FlightSummary): String {
     val zone = ZoneId.systemDefault()
     val now = Instant.now()
+    val today = now.atZone(zone).toLocalDate()
+    val startDate = flight.startedAt.atZone(zone).toLocalDate()
+
     val start = timeFormatter.format(flight.startedAt.atZone(zone))
+    val datePrefix = if (startDate != today) {
+        dateFormatter.format(flight.startedAt.atZone(zone)) + " \u00B7 "
+    } else {
+        ""
+    }
 
     return if (flight.isLiveAt(now)) {
-        "$start \u2013 live"
+        "$datePrefix$start \u2013 live"
     } else {
         val effectiveEnd = flight.effectiveEndAt
         if (effectiveEnd != null) {
             val end = timeFormatter.format(effectiveEnd.atZone(zone))
-            "$start \u2013 $end"
+            "$datePrefix$start \u2013 $end"
         } else {
-            start
+            "$datePrefix$start"
         }
     }
 }
