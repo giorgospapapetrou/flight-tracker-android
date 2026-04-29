@@ -4,13 +4,16 @@ import com.giorgospapapetrou.flightfinder.BuildConfig
 import com.giorgospapapetrou.flightfinder.data.api.dto.AircraftDto
 import com.giorgospapapetrou.flightfinder.data.api.dto.AircraftRemovedDto
 import com.giorgospapapetrou.flightfinder.data.api.dto.StreamEventDto
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -22,28 +25,25 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Wraps the live WebSocket. Exposes a Flow of raw JSON events.
+ * Wraps the live WebSocket. Exposes a shared Flow of events.
  * Auto-reconnects with exponential backoff on disconnect.
+ *
+ * Multiple collectors share a single underlying WebSocket connection.
  */
 @Singleton
 class LiveStreamClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) {
-    /**
-     * Returns an infinite flow of events. Emits Connected/Disconnected
-     * along with each parsed event from the server.
-     *
-     * Cold flow: starts the WebSocket only when collected.
-     * Cancelling the collection closes the WebSocket.
-     */
-    fun events(): Flow<StreamEventEnvelope> = flow {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private val sharedEvents: Flow<StreamEventEnvelope> = flow {
         var backoffMs = 1_000L
         while (true) {
             try {
                 connectOnce().collect { envelope ->
                     if (envelope is StreamEventEnvelope.Connected) {
-                        backoffMs = 1_000L  // reset on successful connect
+                        backoffMs = 1_000L
                     }
                     emit(envelope)
                 }
@@ -54,7 +54,13 @@ class LiveStreamClient @Inject constructor(
             delay(backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
         }
-    }.flowOn(Dispatchers.IO)
+    }.shareIn(
+        scope = scope,
+        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+        replay = 0,
+    )
+
+    fun events(): Flow<StreamEventEnvelope> = sharedEvents
 
     private fun connectOnce(): Flow<StreamEventEnvelope> = callbackFlow {
         val wsUrl = BuildConfig.API_BASE_URL

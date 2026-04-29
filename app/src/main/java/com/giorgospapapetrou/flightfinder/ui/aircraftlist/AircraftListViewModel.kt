@@ -2,10 +2,10 @@ package com.giorgospapapetrou.flightfinder.ui.aircraftlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import com.giorgospapapetrou.flightfinder.data.repository.AircraftRepository
 import com.giorgospapapetrou.flightfinder.domain.model.Aircraft
 import com.giorgospapapetrou.flightfinder.domain.model.AircraftEvent
-import com.giorgospapapetrou.flightfinder.data.api.describeNetworkError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,11 +36,12 @@ class AircraftListViewModel @Inject constructor(
     val uiState: StateFlow<AircraftListUiState> = _uiState.asStateFlow()
 
     init {
-        loadInitialSnapshot()
+        refreshSnapshot()
         observeLiveStream()
     }
 
-    private fun loadInitialSnapshot() {
+    /** Fetches authoritative current aircraft list from the backend. */
+    private fun refreshSnapshot() {
         viewModelScope.launch {
             try {
                 val initial = aircraftRepository.fetchCurrentAircraft()
@@ -49,7 +50,7 @@ class AircraftListViewModel @Inject constructor(
                     it.copy(aircraft = initial, isLoading = false, errorMessage = null)
                 }
             } catch (t: Throwable) {
-                Timber.w(t, "Initial aircraft snapshot failed")
+                Timber.w(t, "Aircraft snapshot failed")
                 _uiState.update {
                     it.copy(isLoading = false, errorMessage = describeNetworkError(t))
                 }
@@ -69,7 +70,13 @@ class AircraftListViewModel @Inject constructor(
                     is AircraftEvent.Removed -> {
                         _uiState.update { it.copy(aircraft = it.aircraft - event.icao) }
                     }
-                    AircraftEvent.Connected, AircraftEvent.Disconnected -> { /* ignore here */ }
+                    AircraftEvent.Connected -> {
+                        // Re-fetch snapshot to discard stale state from any
+                        // disconnect window where we may have missed events.
+                        Timber.i("WS connected — refreshing aircraft snapshot")
+                        refreshSnapshot()
+                    }
+                    AircraftEvent.Disconnected -> { /* ignore */ }
                 }
             }
         }

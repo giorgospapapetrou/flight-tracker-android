@@ -35,11 +35,12 @@ class MapViewModel @Inject constructor(
     val uiState: StateFlow<MapUiState> = _uiState.asStateFlow()
 
     init {
-        loadInitialSnapshot()
+        refreshSnapshot()
         observeLiveStream()
     }
 
-    private fun loadInitialSnapshot() {
+    /** Fetches the authoritative current aircraft list from the backend. */
+    private fun refreshSnapshot() {
         viewModelScope.launch {
             try {
                 val initial = aircraftRepository.fetchCurrentAircraft()
@@ -49,7 +50,7 @@ class MapViewModel @Inject constructor(
                     it.copy(aircraft = initial, isLoading = false, errorMessage = null)
                 }
             } catch (t: Throwable) {
-                Timber.w(t, "Initial snapshot failed")
+                Timber.w(t, "Aircraft snapshot failed")
                 _uiState.update {
                     it.copy(isLoading = false, errorMessage = describeNetworkError(t))
                 }
@@ -63,6 +64,10 @@ class MapViewModel @Inject constructor(
                 when (event) {
                     is AircraftEvent.Connected -> {
                         _uiState.update { it.copy(isStreamConnected = true) }
+                        // Re-fetch snapshot to discard stale state from any
+                        // disconnect window where we may have missed events.
+                        Timber.i("WS connected — refreshing map snapshot")
+                        refreshSnapshot()
                     }
                     is AircraftEvent.Disconnected -> {
                         _uiState.update { it.copy(isStreamConnected = false) }
